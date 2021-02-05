@@ -75,6 +75,17 @@ namespace HttpReports
                 return;
             } 
 
+            if (context.Request.ContentType.IsEmpty()
+                || !context.Request.ContentType.Contains("application/json")
+                || !Options.WithRequest
+                || (context.Request.ContentLength.HasValue && context.Request.ContentLength.Value > Options.MaxBytes))
+            {
+
+                await InvokeHttpCommonAsync(context);
+
+                return;
+            }
+
             var stopwatch = Stopwatch.StartNew();
             stopwatch.Start();
 
@@ -126,6 +137,44 @@ namespace HttpReports
             }
 
         }
+
+
+        private async Task InvokeHttpCommonAsync(HttpContext context)
+        {  
+            var stopwatch = Stopwatch.StartNew();
+            stopwatch.Start();
+
+            ConfigTrace(context);  
+
+            try
+            { 
+                await Next(context);
+            }
+            catch (Exception ex)
+            {
+                if (!context.Items.ContainsKey(BasicConfig.HttpReportsGlobalException))
+                {
+                    context.Items.Add(BasicConfig.HttpReportsGlobalException, ex);
+                }
+
+                throw ex;
+            }
+            finally
+            {
+                stopwatch.Stop(); 
+
+                context.Items.Add(BasicConfig.HttpReportsTraceCost, stopwatch.ElapsedMilliseconds);
+                context.Items.Add(BasicConfig.HttpReportsRequestBody, "");
+                context.Items.Add(BasicConfig.HttpReportsResponseBody, ""); 
+
+                if (!string.IsNullOrEmpty(context.Request.Path))
+                {
+                    InvokeProcesser.Process(context);
+                }
+            }  
+
+        }
+
 
         private async Task InvokeGrpcAsync(HttpContext context)
         {
@@ -330,7 +379,13 @@ namespace HttpReports
         }
 
         private bool FilterRequest(HttpContext context)
-        {
+        { 
+            if (context.Request.ContentType != null && context.Request.ContentType.ToLowerInvariant().Contains("form-data"))
+            {
+                return true;
+            }
+
+
             if (context.Request.HasFormContentType && context.Request.Form != null && context.Request.Form.Files != null && context.Request.Form.Files.Any())
             {
                 return true;
